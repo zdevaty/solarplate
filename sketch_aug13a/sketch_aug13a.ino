@@ -9,9 +9,9 @@ Inkplate inkplate(INKPLATE_1BIT);
 // Configuration constants
 #define BLACK 1
 #define WHITE 0
-#define MAX_POINTS 100  // Maximum number of points to plot
-const unsigned long TOKEN_VALIDITY_PERIOD = 43200000; // 12 hours in milliseconds
-const unsigned long UPDATE_INTERVAL = 600000; // 10 minutes in milliseconds
+#define MAX_POINTS 100                                 // Maximum number of points to plot
+const unsigned long TOKEN_VALIDITY_PERIOD = 43200000;  // 12 hours in milliseconds
+const unsigned long UPDATE_INTERVAL = 600000;          // 10 minutes in milliseconds
 
 // Global variables to store token information
 String currentToken = "";
@@ -22,8 +22,8 @@ unsigned long lastUpdateTime = 0;
 String formatTime(uint64_t timestampMs, int timezoneOffsetHours);
 float findMax(float array[], int length);
 void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints,
-                      float solarValues[], float gridInValues[], float gridOutValues[],
-                      int timezoneOffset);
+                       float solarValues[], float gridInValues[], float gridOutValues[],
+                       int timezoneOffset);
 String getVictronToken();
 String getBatteryData(String token);
 void ensureWiFiConnected();
@@ -64,8 +64,7 @@ String getVictronToken() {
   String token = "";
   ensureWiFiConnected();
 
-  String payload = "{\"username\":\"" + String(victronUsername) +
-                  "\",\"password\":\"" + String(victronPassword) + "\"}";
+  String payload = "{\"username\":\"" + String(victronUsername) + "\",\"password\":\"" + String(victronPassword) + "\"}";
   String url = "https://vrmapi.victronenergy.com/v2/auth/login";
 
   Serial.println("Attempting to connect to Victron API...");
@@ -81,8 +80,7 @@ String getVictronToken() {
   if (httpResponseCode <= 0) {
     Serial.print("HTTP error: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" +
-                     String(http.errorToString(httpResponseCode).c_str()) + ")";
+    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" + String(http.errorToString(httpResponseCode).c_str()) + ")";
     Serial.println(errorMsg);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
@@ -174,8 +172,7 @@ String getBatteryData(String token) {
   if (httpResponseCode <= 0) {
     Serial.print("HTTP error: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" +
-                     String(http.errorToString(httpResponseCode).c_str()) + ")";
+    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" + String(http.errorToString(httpResponseCode).c_str()) + ")";
     Serial.println(errorMsg);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
@@ -240,17 +237,17 @@ void ensureWiFiConnected() {
 
 // Function to draw the combined graph
 void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints,
-                      float solarValues[], float gridInValues[], float gridOutValues[],
-                      int timezoneOffset) {
+                       float solarValues[], float gridInValues[], float gridOutValues[],
+                       int timezoneOffset) {
   // Clear the display for the graph
   inkplate.clearDisplay();
 
   // Define graph dimensions and margins
-  int margin = 70;
-  int displayWidth = 1200;  // Inkplate 10 width
-  int displayHeight = 825;  // Inkplate 10 height
-  int graphWidth = displayWidth - 2 * margin;
-  int graphHeight = 400;
+  int margin = 43;
+  int displayWidth = 1200;                          // Inkplate 10 width
+  int displayHeight = 825;                          // Inkplate 10 height
+  int graphWidth = displayWidth - 2 * margin - 5; 
+  int graphHeight = 350;
   int graphX = margin;
   int graphY = margin;
 
@@ -274,24 +271,22 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
   inkplate.drawLine(rightAxisX, graphY, rightAxisX, graphY + graphHeight, BLACK);
 
   // Draw left y-axis labels (battery %)
-  inkplate.setTextSize(1);
+  inkplate.setTextSize(2);
   for (int i = 0; i <= 100; i += 25) {
     int yPos = graphY + graphHeight - (i * graphHeight / 100);
     inkplate.drawLine(graphX - 3, yPos, graphX, yPos, BLACK);
-    inkplate.setCursor(graphX - 30, yPos - 3);
+    inkplate.setCursor(graphX - 40, yPos - 5 );
     inkplate.print(i);
-    inkplate.print("%");
   }
 
   // Draw right y-axis labels (for kW values)
   int numRightLabels = 10;
   for (int i = 0; i <= numRightLabels; i++) {
-    float labelValue = (i * 2 * rightAxisMax) / numRightLabels - rightAxisMax;
+    int labelValue = round((i * 2 * rightAxisMax) / numRightLabels);
     int yPos = graphY + graphHeight - (i * graphHeight) / numRightLabels;
     inkplate.drawLine(rightAxisX, yPos, rightAxisX + 3, yPos, BLACK);
     inkplate.setCursor(rightAxisX + 10, yPos - 3);
     inkplate.print(labelValue, 1);
-    inkplate.print("kW");
   }
 
   // Draw x-axis labels (times)
@@ -308,7 +303,7 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
     int y1 = graphY + graphHeight - (percentages[i] * graphHeight / 100);
     int x2 = graphX + ((i + 1) * graphWidth) / (numPoints - 1);
     int y2 = graphY + graphHeight - (percentages[i + 1] * graphHeight / 100);
-    inkplate.drawLine(x1, y1, x2, y2, BLACK);
+    drawThickLineWithCircles(x1, y1, x2, y2, 5, BLACK);
   }
 
   // Calculate bar widths
@@ -349,11 +344,7 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
     if (solarValues[i] > 0) {
       int barHeight = (solarValues[i] / rightAxisMax) * graphHeight;
       int yPos = graphY + graphHeight - barHeight;
-      inkplate.drawRect(solarXPos, yPos, barWidth, barHeight, BLACK);
-      // Fill pattern
-      for (int y = yPos; y < yPos + barHeight; y += 2) {
-        inkplate.drawLine(solarXPos, y, solarXPos + barWidth, y, BLACK);
-      }
+      inkplate.fillRect(solarXPos, yPos, barWidth, barHeight, BLACK);
     }
 
     // Draw grid bar
@@ -386,56 +377,62 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
   }
 
   // Add legend
-  int legendX = graphX + graphWidth + 20;
-  int legendY = graphY;
+  int legendX = 10;
+  int legendY = 15;
 
   inkplate.setCursor(legendX, legendY);
-  inkplate.print("Battery:");
-  inkplate.drawLine(legendX - 10, legendY + 5, legendX - 10 + 20, legendY + 5, BLACK);
-  legendY += 20;
+  inkplate.print("Baterie [%]");
 
+  legendX = 700;
+  inkplate.fillRect(legendX, legendY, 20, 10, BLACK);
+  legendX += 23;
   inkplate.setCursor(legendX, legendY);
-  inkplate.print("Solar:");
-  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
-  for (int y = legendY - 8; y < legendY - 8 + 10; y += 2) {
-    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y, BLACK);
-  }
-  legendY += 20;
+  inkplate.print("Solar");
 
+  legendX += 70;
+  inkplate.drawRect(legendX, legendY, 20, 10, BLACK);
+  for (int y = legendY; y < legendY + 10; y += 3) {
+    inkplate.drawLine(legendX, y, legendX + 20, y + 3, BLACK);
+  }
+  legendX += 23;
   inkplate.setCursor(legendX, legendY);
-  inkplate.print("Grid:");
-  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
-  for (int y = legendY - 8; y < legendY + 2; y += 3) {
-    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y + 3, BLACK);
-  }
-  inkplate.drawRect(legendX - 15, legendY + 10, 20, 10, BLACK);
-  for (int x = legendX - 15; x < legendX + 5; x += 2) {
-    inkplate.drawLine(x, legendY + 10, x, legendY + 20, BLACK);
-  }
-  legendY += 30;
-
-  inkplate.setCursor(legendX + 5, legendY - 20);
-  inkplate.print("= In (above)");
-  legendY += 10;
-  inkplate.setCursor(legendX + 5, legendY - 10);
-  inkplate.print("= Out (below)");
+  inkplate.print("Sit (vstup/pretoky) [kWh / h]");
 
   // Add title and axis labels
-  inkplate.setTextSize(2);
-  inkplate.setCursor(graphX + graphWidth / 2 - 100, graphY - 20);
+  inkplate.setTextSize(3);
+  inkplate.setCursor(graphX + graphWidth / 2 - 100, graphY - 30);
   inkplate.print("Solaary");
-  inkplate.setTextSize(1);
-  inkplate.setCursor(graphX + graphWidth / 2 - 20, graphY + graphHeight + 30);
-  inkplate.print("Time");
-  inkplate.setCursor(graphX - 25, graphY + graphHeight / 2);
-  inkplate.print("Battery %");
-  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2);
-  inkplate.print("Power (kW)");
-  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2 + 15);
-  inkplate.print("(+in, -out)");
 
   // Display the graph
   inkplate.display();
+}
+
+void drawThickLineWithCircles(int x1, int y1, int x2, int y2, int thickness, int color) {
+  // Calculate the distance between the two points
+  float distance = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
+
+  // If the line is very short, just draw a circle at the midpoint
+  if (distance < thickness) {
+    int midX = (x1 + x2) / 2;
+    int midY = (y1 + y2) / 2;
+    inkplate.fillCircle(midX, midY, thickness / 2, color);
+    return;
+  }
+
+  // Calculate the number of circles we need to draw (one every thickness pixels)
+  int numCircles = distance / (thickness * 0.5);  // Some overlap between circles
+
+  // Draw circles along the line
+  for (int i = 0; i <= numCircles; i++) {
+    float t = (float)i / numCircles;
+    int x = x1 + (x2 - x1) * t;
+    int y = y1 + (y2 - y1) * t;
+    inkplate.fillCircle(x, y, thickness / 2, color);
+  }
+
+  // Also draw circles at the endpoints to ensure full coverage
+  inkplate.fillCircle(x1, y1, thickness / 2, color);
+  inkplate.fillCircle(x2, y2, thickness / 2, color);
 }
 
 // Main update function
@@ -583,7 +580,7 @@ void runDataUpdate() {
 
       if (actualNumPoints > 0) {
         drawCombinedGraph(percentages, timestamps, actualNumPoints,
-                         solarValues, gridInValues, gridOutValues, 2);
+                          solarValues, gridInValues, gridOutValues, 2);
       } else {
         Serial.println("Error: No valid data points to display");
         inkplate.print("\nError: No data");
@@ -614,7 +611,7 @@ void setup() {
   inkplate.partialUpdate(true);
 
   unsigned long wifiStartTime = millis();
-  const unsigned long wifiTimeout = 30000; // 30 second timeout
+  const unsigned long wifiTimeout = 30000;  // 30 second timeout
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
