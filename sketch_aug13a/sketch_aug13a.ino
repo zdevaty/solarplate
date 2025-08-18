@@ -403,135 +403,142 @@ void parseStatsData(String data) {
 // Function to draw the dashboard below the graph
 void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvPower, String systemState, float batterySOC) {
   int margin = 43;
-  int displayWidth = 1200;                     // Inkplate 10 width
-  int displayHeight = 825;                     // Inkplate 10 height
-  int graphHeight = 350;                       // Height of the graph above
-  int dashboardY = margin + graphHeight + 50;  // Start Y position for dashboard (below graph)
+  int displayWidth = 1200;                      // Inkplate 10 width
+  int displayHeight = 825;                      // Inkplate 10 height
+  int graphHeight = 400;                        // Height of the graph above
+  int dashboardY = margin + graphHeight + 135;  // Start Y position for dashboard (below graph)
 
   // Set font size for dashboard
   inkplate.setTextSize(2);
 
   // Define box dimensions and positions
-  int boxHeight = 90;
-  int boxSpacing = 15;
+  int boxHeight = 65;
+  int boxSpacing = 20;
   int startX = margin;
   int startY = dashboardY;
 
-  // We'll use a 3x2 grid with System in the middle
+  // We'll use a 3x3 grid with System in the center
   int colWidth = (displayWidth - 2 * margin) / 3 - boxSpacing;
   int rowHeight = boxHeight + boxSpacing;
 
-  // Define positions for each component in the new layout
+  // Define positions for each component in the grid layout
 
-  // First row (Grid and Load)
+  // First row: Grid (left), empty (middle), Load (right)
   int gridBoxX = startX;
   int gridBoxY = startY;
-  int loadBoxX = startX + 2*(colWidth + boxSpacing);  // Right column
+  int loadBoxX = startX + 2 * (colWidth + boxSpacing);  // Right column
   int loadBoxY = startY;
 
-  // Second row (System only, centered)
+  // Second row: empty (left), System (middle), empty (right)
   int systemBoxX = startX + colWidth + boxSpacing;  // Middle column
   int systemBoxY = startY + boxHeight + boxSpacing;
 
-  // Third row (Battery and PV)
+  // Third row: Battery (left), empty (middle), PV (right)
   int batteryBoxX = startX;
-  int batteryBoxY = startY + 2*(boxHeight + boxSpacing);
-  int pvBoxX = startX + 2*(colWidth + boxSpacing);  // Right column
+  int batteryBoxY = startY + 2 * (boxHeight + boxSpacing);
+  int pvBoxX = startX + 2 * (colWidth + boxSpacing);  // Right column
   int pvBoxY = batteryBoxY;
 
-  // All boxes will be the same width (colWidth) except PV and Battery which are in outer columns
-  int outerBoxWidth = colWidth;
-  int centerBoxWidth = colWidth;
+  // All boxes will be the same width (colWidth)
+  int boxWidth = colWidth;
 
-  // Helper function to draw an arrow
-  auto drawArrow = [](int x, int y, int direction, int size = 10) {
-    // direction: 0=right, 1=down, 2=left, 3=up
-    //            4=down-right, 5=down-left, 6=up-right, 7=up-left
+  // Helper function to draw an arrow on a line (thicker version)
+  auto drawArrowOnLine = [](int x, int y, int direction, int size = 12) {
+    // Thickness of the arrow
+    const int thickness = 3;
+    const int halfThickness = thickness / 2;
+
+    // Draw the main line with thickness
     switch(direction) {
       case 0: // right
-        inkplate.drawLine(x, y, x+size, y, BLACK);
-        inkplate.drawLine(x+size, y, x+size-5, y-5, BLACK);
-        inkplate.drawLine(x+size, y, x+size-5, y+5, BLACK);
+        // Draw a thick horizontal line
+        for(int i = -halfThickness; i <= halfThickness; i++) {
+          inkplate.drawLine(x, y+i, x+size, y+i, BLACK);
+        }
+        // Draw arrowhead (triangle)
+        for(int i = 0; i <= thickness; i++) {
+          inkplate.drawLine(x+size-i, y, x+size-5-i, y-5, BLACK);
+          inkplate.drawLine(x+size-i, y, x+size-5-i, y+5, BLACK);
+        }
         break;
+
       case 1: // down
-        inkplate.drawLine(x, y, x, y+size, BLACK);
-        inkplate.drawLine(x, y+size, x-5, y+size-5, BLACK);
-        inkplate.drawLine(x, y+size, x+5, y+size-5, BLACK);
+        // Draw a thick vertical line
+        for(int i = -halfThickness; i <= halfThickness; i++) {
+          inkplate.drawLine(x+i, y, x+i, y+size, BLACK);
+        }
+        // Arrowhead
+        for(int i = 1; i <= thickness; i++) {
+          inkplate.drawLine(x, y+size-i, x-5, y+size-5-i, BLACK);
+          inkplate.drawLine(x, y+size-i, x+5, y+size-5-i, BLACK);
+        }
         break;
+
       case 2: // left
-        inkplate.drawLine(x, y, x-size, y, BLACK);
-        inkplate.drawLine(x-size, y, x-size+5, y-5, BLACK);
-        inkplate.drawLine(x-size, y, x-size+5, y+5, BLACK);
+        // Draw a thick horizontal line
+        for(int i = -halfThickness; i <= halfThickness; i++) {
+          inkplate.drawLine(x, y+i, x-size, y+i, BLACK);
+        }
+        // Draw arrowhead (triangle)
+        for(int i = 1; i <= thickness; i++) {
+          inkplate.drawLine(x-size+i, y, x-size+5+i, y-5, BLACK);
+          inkplate.drawLine(x-size+i, y, x-size+5+i, y+5, BLACK);
+        }
         break;
+
       case 3: // up
-        inkplate.drawLine(x, y, x, y-size, BLACK);
-        inkplate.drawLine(x, y-size, x-5, y-size+5, BLACK);
-        inkplate.drawLine(x, y-size, x+5, y-size+5, BLACK);
-        break;
-      case 4: // down-right diagonal
-        inkplate.drawLine(x, y, x+size, y+size, BLACK);
-        inkplate.drawLine(x+size, y+size, x+size-5, y+size-5, BLACK);
-        inkplate.drawLine(x+size, y+size, x+size-5, y+size+5, BLACK);
-        break;
-      case 5: // down-left diagonal
-        inkplate.drawLine(x, y, x-size, y+size, BLACK);
-        inkplate.drawLine(x-size, y+size, x-size+5, y+size-5, BLACK);
-        inkplate.drawLine(x-size, y+size, x-size+5, y+size+5, BLACK);
-        break;
-      case 6: // up-right diagonal
-        inkplate.drawLine(x, y, x+size, y-size, BLACK);
-        inkplate.drawLine(x+size, y-size, x+size-5, y-size+5, BLACK);
-        inkplate.drawLine(x+size, y-size, x+size-5, y-size-5, BLACK);
-        break;
-      case 7: // up-left diagonal
-        inkplate.drawLine(x, y, x-size, y-size, BLACK);
-        inkplate.drawLine(x-size, y-size, x-size+5, y-size+5, BLACK);
-        inkplate.drawLine(x-size, y-size, x-size+5, y-size-5, BLACK);
+        // Draw a thick vertical line
+        for(int i = -halfThickness; i <= halfThickness; i++) {
+          inkplate.drawLine(x+i, y, x+i, y-size, BLACK);
+        }
+        // Draw arrowhead (triangle)
+        for(int i = 1; i <= thickness; i++) {
+          inkplate.drawLine(x, y-size+i, x-5, y-size+5+i, BLACK);
+          inkplate.drawLine(x, y-size+i, x+5, y-size+5+i, BLACK);
+        }
         break;
     }
-  };
+};
+
+
+  // Draw all boxes
 
   // Draw Grid box (top left)
-  inkplate.drawRect(gridBoxX, gridBoxY, outerBoxWidth, boxHeight, BLACK);
+  inkplate.drawRect(gridBoxX, gridBoxY, boxWidth, boxHeight, BLACK);
   inkplate.setCursor(gridBoxX + 10, gridBoxY + 10);
   inkplate.print("Sit");  // Grid
 
-  int gridArrowX = gridBoxX + outerBoxWidth/2;
+  int gridArrowX = gridBoxX + boxWidth / 2;
   int gridArrowY = gridBoxY + 30;
+  inkplate.setCursor(gridBoxX + 10, gridBoxY + 40);
+  inkplate.setTextSize(3);
   if (gridPower < 0) {
-    // Exporting to grid (power flowing out)
-    drawArrow(gridArrowX, gridArrowY, 2);  // left arrow (out to grid)
-    inkplate.setCursor(gridBoxX + 10, gridBoxY + 40);
     inkplate.print(abs(gridPower), 0);
-    inkplate.print(" W");
-    inkplate.setCursor(gridBoxX + 10, gridBoxY + 60);
-    inkplate.print("Vyvoz");  // Export
+    inkplate.print(" W Pretok");
   } else {
-    // Importing from grid (power flowing in)
-    drawArrow(gridArrowX, gridArrowY, 0);  // right arrow (in from grid)
-    inkplate.setCursor(gridBoxX + 10, gridBoxY + 40);
     inkplate.print(gridPower, 0);
     inkplate.print(" W");
-    inkplate.setCursor(gridBoxX + 10, gridBoxY + 60);
-    inkplate.print("Dovoz");  // Import
   }
+  inkplate.setTextSize(2);
+
 
   // Draw AC Loads box (top right)
-  inkplate.drawRect(loadBoxX, loadBoxY, outerBoxWidth, boxHeight, BLACK);
+  inkplate.drawRect(loadBoxX, loadBoxY, boxWidth, boxHeight, BLACK);
   inkplate.setCursor(loadBoxX + 10, loadBoxY + 10);
   inkplate.print("Zatez");  // Load
-  // Right arrow shows power flowing to loads
-  drawArrow(loadBoxX + outerBoxWidth/2, loadBoxY + 30, 0);
+  inkplate.setTextSize(3);
   inkplate.setCursor(loadBoxX + 10, loadBoxY + 40);
   inkplate.print(acLoads, 0);
   inkplate.print(" W");
+  inkplate.setTextSize(2);
 
   // Draw System box (middle center)
-  inkplate.drawRect(systemBoxX, systemBoxY, centerBoxWidth, boxHeight, BLACK);
+  inkplate.drawRect(systemBoxX, systemBoxY, boxWidth, boxHeight, BLACK);
   inkplate.setCursor(systemBoxX + 10, systemBoxY + 10);
-  inkplate.print("System stav");  // System state
+  inkplate.print("System");  // System state
   inkplate.setCursor(systemBoxX + 10, systemBoxY + 40);
 
+  // Translate system state to Czech
   String translatedState;
   if (systemState == "External control") {
     translatedState = "Externi rizeni";
@@ -547,135 +554,194 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   inkplate.print(translatedState);
 
   // Draw Battery box (bottom left)
-  inkplate.drawRect(batteryBoxX, batteryBoxY, outerBoxWidth, boxHeight, BLACK);
+  inkplate.drawRect(batteryBoxX, batteryBoxY, boxWidth, boxHeight, BLACK);
   inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 10);
   inkplate.print("Baterie");  // Battery
 
-  int batteryArrowX = batteryBoxX + outerBoxWidth/2;
+  int batteryArrowX = batteryBoxX + boxWidth / 2;
   int batteryArrowY = batteryBoxY + 30;
   if (abs(batteryPower) < 10) {
     inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 40);
     inkplate.print(currentDashboardData.batteryState);
   } else {
+    inkplate.setTextSize(3);
     if (batteryPower > 0) {
-      // Charging - arrow pointing up (into system)
-      drawArrow(batteryArrowX, batteryArrowY, 3);
       inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 40);
-      inkplate.print("Nabijeni");
-      inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 60);
       inkplate.print(abs(batteryPower), 0);
-      inkplate.print(" W");
+      inkplate.print(" W Nabijeni");
     } else {
-      // Discharging - arrow pointing down (out to system)
-      drawArrow(batteryArrowX, batteryArrowY, 1);
       inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 40);
-      inkplate.print("Vybijeni");
-      inkplate.setCursor(batteryBoxX + 10, batteryBoxY + 60);
       inkplate.print(abs(batteryPower), 0);
-      inkplate.print(" W");
+      inkplate.print(" W Vybijeni");
     }
+    inkplate.setTextSize(2);
   }
-  inkplate.setCursor(batteryBoxX + outerBoxWidth - 60, batteryBoxY + 10);
+  inkplate.setTextSize(3);
+  inkplate.setCursor(batteryBoxX + boxWidth - 90, batteryBoxY + 10);
   inkplate.print(batterySOC, 1);
   inkplate.print("%");
+  inkplate.setTextSize(2);
 
   // Draw PV Charger box (bottom right)
-  inkplate.drawRect(pvBoxX, pvBoxY, outerBoxWidth, boxHeight, BLACK);
+  inkplate.drawRect(pvBoxX, pvBoxY, boxWidth, boxHeight, BLACK);
   inkplate.setCursor(pvBoxX + 10, pvBoxY + 10);
   inkplate.print("Solarni nabijec");  // Solar charger
-  // Up arrow shows power flowing into system
-  drawArrow(pvBoxX + outerBoxWidth/2, pvBoxY + 30, 3);
+  inkplate.setTextSize(3);
   inkplate.setCursor(pvBoxX + 10, pvBoxY + 40);
   inkplate.print(pvPower, 0);
   inkplate.print(" W");
+  inkplate.setTextSize(2);
 
-  // Calculate center points of each box for arrow positioning
-  int gridCenterX = gridBoxX + outerBoxWidth/2;
-  int gridCenterY = gridBoxY + boxHeight/2;
-  int loadCenterX = loadBoxX + outerBoxWidth/2;
-  int loadCenterY = loadBoxY + boxHeight/2;
-  int systemCenterX = systemBoxX + centerBoxWidth/2;
-  int systemCenterY = systemBoxY + boxHeight/2;
-  int batteryCenterX = batteryBoxX + outerBoxWidth/2;
-  int batteryCenterY = batteryBoxY + boxHeight/2;
-  int pvCenterX = pvBoxX + outerBoxWidth/2;
-  int pvCenterY = pvBoxY + boxHeight/2;
+  // Calculate connection points for each box
+  // These are points on the edges of each box where connections should start/end
+  int gridRightX = gridBoxX + boxWidth;
+  int gridCenterY = gridBoxY + boxHeight / 2;
 
-  // Draw arrows between components to show power flow
+  int loadLeftX = loadBoxX;
+  int loadCenterY = loadBoxY + boxHeight / 2;
 
-  // 1. Grid to System (if importing)
+  int systemLeftX = systemBoxX;
+  int systemRightX = systemBoxX + boxWidth;
+  int systemTopY = systemBoxY;
+  int systemBottomY = systemBoxY + boxHeight;
+  int systemCenterX = systemBoxX + boxWidth / 2;
+  int systemCenterY = systemBoxY + boxHeight / 2;
+
+  int batteryTopX = batteryBoxX + boxWidth / 2;
+  int batteryTopY = batteryBoxY;
+  int batteryCenterY = batteryBoxY + boxHeight / 2;
+
+  int pvTopX = pvBoxX + boxWidth / 2;
+  int pvTopY = pvBoxY;
+  int pvCenterY = pvBoxY + boxHeight / 2;
+
+  // Helper function to draw an orthogonal connection between two points with an arrow
+  auto drawOrthogonalConnection = [&](int startX, int startY, int endX, int endY, int arrowDir) {
+    // Calculate the midpoint where the line changes direction
+    int midX = endX;    // First go horizontally to target's X position
+    int midY = startY;  // Then vertically to target's Y position
+
+    // Draw the horizontal segment
+    inkplate.drawLine(startX, startY, midX, startY, BLACK);
+    // Draw the vertical segment
+    inkplate.drawLine(midX, startY, midX, endY, BLACK);
+    // Draw the final horizontal segment into the target box
+    inkplate.drawLine(midX, endY, endX, endY, BLACK);
+
+    // Place arrow on the first horizontal segment
+    int arrowX = (startX + midX) / 2;
+    int arrowY = startY;
+    drawArrowOnLine(arrowX, arrowY, arrowDir);
+  };
+
+  // 1. Grid to System connection (if importing)
   if (gridPower > 10) {
-    // From grid (left) to system (center)
-    inkplate.drawLine(gridBoxX + outerBoxWidth, gridCenterY,
-                     systemBoxX, systemCenterY, BLACK);
-    drawArrow((gridBoxX + outerBoxWidth + systemBoxX)/2,
-              (gridCenterY + systemCenterY)/2, 4);  // down-right arrow
+    drawOrthogonalConnection(
+      gridBoxX + boxWidth, gridCenterY,  // Start at right center of grid box
+      systemBoxX, systemCenterY,         // End at left center of system box
+      0                                  // Arrow direction: right
+    );
   }
 
-  // 2. System to Grid (if exporting)
+  // 2. System to Grid connection (if exporting)
   if (gridPower < -10) {
-    // From system (center) to grid (left)
-    inkplate.drawLine(systemBoxX, systemCenterY,
-                     gridBoxX + outerBoxWidth, gridCenterY, BLACK);
-    drawArrow((gridBoxX + outerBoxWidth + systemBoxX)/2,
-              (gridCenterY + systemCenterY)/2, 6);  // up-right arrow (but actually down-left from system)
-    // Actually should be up-left diagonal (7) because we're going from system to grid (up and left)
-    // Redraw line and arrow with correct direction
-    inkplate.drawLine(systemBoxX, systemCenterY,
-                     gridBoxX + outerBoxWidth, gridCenterY, BLACK);
-    drawArrow((gridBoxX + outerBoxWidth + systemBoxX)/2,
-              (gridCenterY + systemCenterY)/2, 7);  // up-left arrow
+    // Start at left center of system box, end at right center of grid box
+    // Need to reverse the arrow direction (left = 2)
+    // For this case, we'll modify our approach slightly since we need the arrow to point left
+    int startX = systemBoxX;
+    int startY = systemCenterY;
+    int endX = gridBoxX + boxWidth;
+    int endY = gridCenterY;
+
+    int midX = endX;    // Go to grid's X position first
+    int midY = startY;  // Then down to grid's Y position
+
+    inkplate.drawLine(startX, startY, midX, startY, BLACK);
+    inkplate.drawLine(midX, startY, midX, endY, BLACK);
+    inkplate.drawLine(midX, endY, endX, endY, BLACK);
+
+    // Place arrow on the horizontal segment pointing left
+    drawArrowOnLine((startX + midX) / 2, startY, 2);  // Left arrow
   }
 
-  // 3. PV to System (always when PV is producing)
+  // 3. PV to System connection (always when PV is producing)
   if (pvPower > 10) {
-    // From PV (bottom right) to system (middle center)
-    inkplate.drawLine(pvCenterX, pvBoxY,  // Start at top of PV box
-                     systemCenterX, systemBoxY + boxHeight,  // End at bottom of system box
-                     BLACK);
-    drawArrow((pvCenterX + systemCenterX)/2,
-              (pvBoxY + systemBoxY + boxHeight)/2, 5);  // down-left arrow
-    // Actually should be up-left diagonal (7) because we're going from PV to system (up and left)
-    // Redraw line and arrow with correct direction
-    inkplate.drawLine(pvCenterX, pvBoxY,
-                     systemCenterX, systemBoxY + boxHeight, BLACK);
-    drawArrow((pvCenterX + systemCenterX)/2,
-              (pvBoxY + systemBoxY + boxHeight)/2, 7);  // up-left arrow
+    // For PV to System, we'll go up then left
+    int startX = pvTopX;
+    int startY = pvTopY;
+    int endX = systemCenterX;
+    int endY = systemBoxY + boxHeight;  // Bottom of system box
+
+    // Calculate midpoint for the bend
+    int midX = startX;  // First go vertical, then horizontal
+    int midY = endY;    // To the system's bottom Y
+
+    // Draw vertical line up from PV
+    inkplate.drawLine(startX, startY, startX, midY, BLACK);
+    // Draw horizontal line to system
+    inkplate.drawLine(startX, midY, endX, midY, BLACK);
+    // Draw final vertical line into system (none needed as we're at bottom)
+
+    // Place arrow on the vertical segment (up direction)
+    drawArrowOnLine(startX, (startY + midY) / 2, 3);  // Up arrow
   }
 
-  // 4. Battery to System (if discharging) or System to Battery (if charging)
-  if (batteryPower < -10) {
-    // From battery (bottom left) to system (middle center)
-    inkplate.drawLine(batteryCenterX, batteryBoxY,
-                     systemCenterX, systemBoxY + boxHeight, BLACK);
-    drawArrow((batteryCenterX + systemCenterX)/2,
-              (batteryBoxY + systemBoxY + boxHeight)/2, 6);  // up-right arrow
-  } else if (batteryPower > 10) {
-    // From system (middle center) to battery (bottom left)
-    inkplate.drawLine(systemCenterX, systemBoxY + boxHeight,
-                     batteryCenterX, batteryBoxY, BLACK);
-    drawArrow((systemCenterX + batteryCenterX)/2,
-              (systemBoxY + boxHeight + batteryBoxY)/2, 4);  // down-right arrow
+  // 4. Battery to/from System connection
+  if (abs(batteryPower) > 10) {
+    int startX = batteryTopX;
+    int startY = batteryBoxY;  // Top of battery box
+    int endX = systemCenterX;
+    int endY;
+
+    if (batteryPower < -10) {         // Discharging - battery to system
+      endY = systemBoxY + boxHeight;  // Bottom of system box
+
+      // Draw vertical line up from battery to system's bottom
+      int midY = (startY + endY) / 2;
+
+      inkplate.drawLine(startX, startY, startX, endY, BLACK);
+      inkplate.drawLine(startX, endY, endX, endY, BLACK);
+
+      // Place arrow on the vertical segment (up direction)
+      drawArrowOnLine(startX, (startY + endY) / 2, 3);  // Up arrow
+    } else {                                            // Charging - system to battery
+      endY = systemBoxY;                                // Top of system box
+      startY = batteryBoxY + boxHeight;                 // Bottom of battery box
+
+      // Draw vertical line down from system to battery
+      inkplate.drawLine(endX, endY, endX, startY, BLACK);
+      inkplate.drawLine(endX, startY, startX, startY, BLACK);
+
+      // Place arrow on the vertical segment (down direction)
+      drawArrowOnLine(endX, (endY + startY) / 2, 1);  // Down arrow
+    }
   }
 
-  // 5. System to Load (always when loads are active)
+  // 5. System to Load connection (always when loads are active)
   if (acLoads > 10) {
-    // From system (middle center) to load (top right)
-    inkplate.drawLine(systemBoxX + centerBoxWidth, systemCenterY,
-                     loadBoxX, loadCenterY, BLACK);
-    drawArrow((systemBoxX + centerBoxWidth + loadBoxX)/2,
-              (systemCenterY + loadCenterY)/2, 4);  // down-right arrow
-    // Actually should be up-right diagonal (6) because we're going from system to load (up and right)
-    // Redraw line and arrow with correct direction
-    inkplate.drawLine(systemBoxX + centerBoxWidth, systemCenterY,
-                     loadBoxX, loadCenterY, BLACK);
-    drawArrow((systemBoxX + centerBoxWidth + loadBoxX)/2,
-              (systemCenterY + loadCenterY)/2, 6);  // up-right arrow
+    // From top center of system box to left center of load box
+    int startX = systemCenterX;
+    int startY = systemBoxY;  // Top of system
+    int endX = loadBoxX;      // Left of load
+    int endY = loadCenterY;   // Middle of load
+
+    // Draw vertical line up from system to load's row
+    int midY = startY - 20;  // Arbitrary point above system
+    int midX = endX;         // Align with load's left edge
+
+    inkplate.drawLine(startX, startY, startX, midY, BLACK);
+    inkplate.drawLine(startX, midY, midX, midY, BLACK);
+    inkplate.drawLine(midX, midY, midX, endY, BLACK);
+
+    // Place arrow on the horizontal segment (right direction)
+    drawArrowOnLine((startX + midX) / 2, midY, 0);  // Right arrow
   }
 
   // Update display
   inkplate.partialUpdate(true);
 }
+
+
 
 
 // Function to draw the combined graph
