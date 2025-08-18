@@ -6,23 +6,36 @@
 
 Inkplate inkplate(INKPLATE_1BIT);
 
-String currentToken = "";
-unsigned long tokenTimestamp = 0;
-const unsigned long TOKEN_VALIDITY_PERIOD = 43200000; // 12 hours in milliseconds
-
+// Configuration constants
 #define BLACK 1
 #define WHITE 0
 #define MAX_POINTS 100  // Maximum number of points to plot
+const unsigned long TOKEN_VALIDITY_PERIOD = 43200000; // 12 hours in milliseconds
+const unsigned long UPDATE_INTERVAL = 600000; // 10 minutes in milliseconds
+
+// Global variables to store token information
+String currentToken = "";
+unsigned long tokenTimestamp = 0;
+unsigned long lastUpdateTime = 0;
+
+// Forward declarations
+String formatTime(uint64_t timestampMs, int timezoneOffsetHours);
+float findMax(float array[], int length);
+void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints,
+                      float solarValues[], float gridInValues[], float gridOutValues[],
+                      int timezoneOffset);
+String getVictronToken();
+String getBatteryData(String token);
+void ensureWiFiConnected();
+void runDataUpdate();
 
 // Helper function to format a timestamp into a time string
-String formatTime(uint64_t timestampMs, int timezoneOffsetHours = 0) {
+String formatTime(uint64_t timestampMs, int timezoneOffsetHours) {
   time_t timestamp = timestampMs / 1000;
   timestamp += timezoneOffsetHours * 3600;
-
   int secondsInDay = timestamp % 86400L;
   int hours = secondsInDay / 3600;
   int minutes = (secondsInDay % 3600) / 60;
-
   char timeStr[6];
   sprintf(timeStr, "%02d:%02d", hours, minutes);
   return String(timeStr);
@@ -39,253 +52,23 @@ float findMax(float array[], int length) {
   return maxVal;
 }
 
-// Modified function to draw the combined graph with grid in/out as a single bar
-void drawCombinedGraph(
-  float percentages[], uint64_t timestamps[], int numPoints,
-  float solarValues[], float gridInValues[], float gridOutValues[],
-  int timezoneOffset = 0) {
-
-  // Clear the display for the graph
-  inkplate.clearDisplay();
-
-  // Define graph dimensions and margins
-  int margin = 70;
-  int displayWidth = 1200;  // Inkplate 10 width
-  int displayHeight = 825;  // Inkplate 10 height
-  int graphWidth = displayWidth - 2 * margin;
-  int graphHeight = 400;
-  int graphX = margin;
-  int graphY = margin;
-
-  // Calculate scaling for the right y-axis (power in kW)
-  // Find maximum values for each metric to determine y-axis scale
-  float maxSolar = findMax(solarValues, numPoints);
-  float maxGridIn = findMax(gridInValues, numPoints);
-  float maxGridOut = findMax(gridOutValues, numPoints);
-
-  // For the grid, we need to consider both positive (in) and negative (out) values
-  // So our max should be the larger of maxGridIn or maxGridOut
-  float gridMax = max(maxGridIn, maxGridOut);
-
-  // The right y-axis will scale based on the maximum of solar and grid values
-  float rightAxisMax = max(maxSolar, gridMax);
-  // Round up to a nice number
-  if (rightAxisMax <= 5) rightAxisMax = 5;
-  else if (rightAxisMax <= 10) rightAxisMax = 10;
-  else if (rightAxisMax <= 20) rightAxisMax = 20;
-  else rightAxisMax = ceil(rightAxisMax / 10) * 10;
-
-  // Draw graph axes
-  inkplate.drawLine(graphX, graphY + graphHeight, graphX + graphWidth, graphY + graphHeight, BLACK);  // X-axis
-  inkplate.drawLine(graphX, graphY, graphX, graphY + graphHeight, BLACK);                             // Left Y-axis (battery %)
-
-  // Right y-axis (for kW values)
-  int rightAxisX = graphX + graphWidth;
-  inkplate.drawLine(rightAxisX, graphY, rightAxisX, graphY + graphHeight, BLACK);
-
-  // Draw left y-axis labels (0%, 25%, 50%, 75%, 100%) - Battery %
-  inkplate.setTextSize(1);
-  for (int i = 0; i <= 100; i += 25) {
-    int yPos = graphY + graphHeight - (i * graphHeight / 100);
-    inkplate.drawLine(graphX - 3, yPos, graphX, yPos, BLACK);  // Small tick mark
-    inkplate.setCursor(graphX - 30, yPos - 3);
-    inkplate.print(i);
-    inkplate.print("%");
-  }
-
-  // Draw right y-axis labels (for kW values)
-  // Since we have both positive and negative values, we'll center the axis at zero
-  // The axis will range from -rightAxisMax to +rightAxisMax
-  int numRightLabels = 10;
-  for (int i = 0; i <= numRightLabels; i++) {
-    float labelValue = (i * 2 * rightAxisMax) / numRightLabels - rightAxisMax;  // From -max to +max
-    int yPos = graphY + graphHeight - (i * graphHeight) / numRightLabels;
-    inkplate.drawLine(rightAxisX, yPos, rightAxisX + 3, yPos, BLACK);  // Small tick mark
-    inkplate.setCursor(rightAxisX + 10, yPos - 3);
-    inkplate.print(labelValue, 1);  // 1 decimal place
-    inkplate.print("kW");
-  }
-
-  // Draw x-axis labels (times)
-  for (int i = 0; i < numPoints; i += max(1, numPoints / 10)) {
-    int xPos = graphX + (i * graphWidth) / (numPoints - 1);
-    String timeStr = formatTime(timestamps[i], timezoneOffset);
-    inkplate.setCursor(xPos - 20, graphY + graphHeight + 10);
-    inkplate.print(timeStr);
-  }
-
-  // Draw the battery percentage line graph (on left side)
-  for (int i = 0; i < numPoints - 1; i++) {
-    int x1 = graphX + (i * graphWidth) / (numPoints - 1);
-    int y1 = graphY + graphHeight - (percentages[i] * graphHeight / 100);
-    int x2 = graphX + ((i + 1) * graphWidth) / (numPoints - 1);
-    int y2 = graphY + graphHeight - (percentages[i + 1] * graphHeight / 100);
-    inkplate.drawLine(x1, y1, x2, y2, BLACK);
-  }
-
-  // Calculate bar widths
-  int barWidth = max(5, min(20, graphWidth / numPoints / 4));  // Narrower bars to fit both solar and grid
-  int barSpacing = barWidth + 2;                               // Space between bars
-
-  // Create a combined grid value array where:
-  // positive values = grid in (consumption from grid)
-  // negative values = grid out (overflow to grid)
-  float gridValues[MAX_POINTS];
-  for (int i = 0; i < numPoints; i++) {
-    // Grid in is positive, grid out is negative
-    gridValues[i] = gridInValues[i] - gridOutValues[i];
-  }
-
-  // Find the maximum absolute grid value for scaling
-  float maxAbsGrid = 0;
-  for (int i = 0; i < numPoints; i++) {
-    float absValue = abs(gridValues[i]);
-    if (absValue > maxAbsGrid) {
-      maxAbsGrid = absValue;
-    }
-  }
-  // Update our right axis max if needed
-  if (maxAbsGrid > rightAxisMax) {
-    rightAxisMax = maxAbsGrid;
-    // Round up again
-    if (rightAxisMax <= 5) rightAxisMax = 5;
-    else if (rightAxisMax <= 10) rightAxisMax = 10;
-    else if (rightAxisMax <= 20) rightAxisMax = 20;
-    else rightAxisMax = ceil(rightAxisMax / 10) * 10;
-  }
-
-  // Draw bars for each metric at each time point
-  for (int i = 0; i < numPoints; i++) {
-    int xPosBase = graphX + (i * graphWidth) / (numPoints - 1);
-
-    // Position for solar bar (left half)
-    int solarXPos = xPosBase - barWidth - 2;
-    if (solarXPos < graphX) solarXPos = graphX;
-
-    // Position for grid bar (right half)
-    int gridXPos = xPosBase + 2;
-
-    // Draw solar production bars (solid fill) - always positive
-    if (solarValues[i] > 0) {
-      int barHeight = (solarValues[i] / rightAxisMax) * graphHeight;
-      int yPos = graphY + graphHeight - barHeight;
-      inkplate.drawRect(solarXPos, yPos, barWidth, barHeight, BLACK);
-      // Fill with horizontal lines (solid fill)
-      for (int y = yPos; y < yPos + barHeight; y += 2) {
-        inkplate.drawLine(solarXPos, y, solarXPos + barWidth, y, BLACK);
-      }
-    }
-
-    // Draw combined grid bar
-    // The height depends on whether it's positive (grid in) or negative (grid out)
-    float gridValue = gridValues[i];
-    if (gridValue != 0) {
-      int barHeight;
-      int yPos;
-
-      if (gridValue > 0) {  // Grid consumption (positive)
-        barHeight = (gridValue / rightAxisMax) * graphHeight;
-        yPos = graphY + graphHeight - barHeight;
-      } else {  // Grid overflow (negative)
-        barHeight = (abs(gridValue) / rightAxisMax) * graphHeight;
-        yPos = graphY + graphHeight;  // Starts at baseline and goes downward
-      }
-
-      // Draw the grid bar
-      if (gridValue > 0) {
-        // Positive grid value (consumption) - extends upward
-        inkplate.drawRect(gridXPos, yPos, barWidth, barHeight, BLACK);
-        // Fill with diagonal hatching
-        for (int y = yPos; y < yPos + barHeight; y += 3) {
-          inkplate.drawLine(gridXPos, y, gridXPos + barWidth, y + 3, BLACK);
-        }
-      } else {
-        // Negative grid value (overflow) - extends downward
-        inkplate.drawRect(gridXPos, yPos, barWidth, barHeight, BLACK);
-        // Fill with vertical lines
-        for (int x = gridXPos; x < gridXPos + barWidth; x += 2) {
-          inkplate.drawLine(x, yPos, x, yPos + barHeight, BLACK);
-        }
-      }
-    }
-  }
-
-  // Add legend
-  int legendX = graphX + graphWidth + 20;
-  int legendY = graphY;
-
-  // Battery line legend
-  inkplate.setCursor(legendX, legendY);
-  inkplate.print("Battery:");
-  inkplate.drawLine(legendX - 10, legendY + 5, legendX - 10 + 20, legendY + 5, BLACK);
-  legendY += 20;
-
-  // Solar legend
-  inkplate.setCursor(legendX, legendY);
-  inkplate.print("Solar:");
-  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
-  for (int y = legendY - 8; y < legendY - 8 + 10; y += 2) {
-    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y, BLACK);
-  }
-  legendY += 20;
-
-  // Grid legend
-  inkplate.setCursor(legendX, legendY);
-  inkplate.print("Grid:");
-  // Draw sample grid in bar (positive)
-  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
-  for (int y = legendY - 8; y < legendY + 2; y += 3) {
-    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y + 3, BLACK);
-  }
-  // Draw sample grid out bar (negative) below
-  inkplate.drawRect(legendX - 15, legendY + 10, 20, 10, BLACK);
-  for (int x = legendX - 15; x < legendX + 5; x += 2) {
-    inkplate.drawLine(x, legendY + 10, x, legendY + 20, BLACK);
-  }
-
-  legendY += 30;  // Skip down past the sample bars
-
-  inkplate.setCursor(legendX + 5, legendY - 20);
-  inkplate.print("= In (above)");
-  legendY += 10;
-  inkplate.setCursor(legendX + 5, legendY - 10);
-  inkplate.print("= Out (below)");
-  legendY += 20;
-
-  // Add title and axis labels
-  inkplate.setTextSize(2);
-  inkplate.setCursor(graphX + graphWidth / 2 - 100, graphY - 20);
-  inkplate.print("Solaary");
-
-  inkplate.setTextSize(1);
-  inkplate.setCursor(graphX + graphWidth / 2 - 20, graphY + graphHeight + 30);
-  inkplate.print("Time");
-
-  // Label Y axes
-  inkplate.setCursor(graphX - 25, graphY + graphHeight / 2);
-  inkplate.print("Battery %");
-  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2);
-  inkplate.print("Power (kW)");
-  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2 + 15);
-  inkplate.print("(+in, -out)");
-
-  // Display the graph
-  inkplate.display();
-}
-
 // Function to authenticate and get the token
 String getVictronToken() {
+  // If we have a valid token in memory, return it
+  if (currentToken != "" && millis() - tokenTimestamp < TOKEN_VALIDITY_PERIOD) {
+    Serial.println("Using cached token");
+    return currentToken;
+  }
+
   HTTPClient http;
   String token = "";
-
   ensureWiFiConnected();
 
-  String payload = "{\"username\":\"" + String(victronUsername) + "\",\"password\":\"" + String(victronPassword) + "\"}";
+  String payload = "{\"username\":\"" + String(victronUsername) +
+                  "\",\"password\":\"" + String(victronPassword) + "\"}";
   String url = "https://vrmapi.victronenergy.com/v2/auth/login";
 
   Serial.println("Attempting to connect to Victron API...");
-
-  // Begin HTTP connection with timeout
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Cache-Control", "no-cache");
@@ -294,15 +77,12 @@ String getVictronToken() {
 
   int httpResponseCode = http.POST(payload);
 
-  // Check HTTP response
+  // Error handling
   if (httpResponseCode <= 0) {
     Serial.print("HTTP error: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: ";
-    errorMsg += httpResponseCode;
-    errorMsg += " (";
-    errorMsg += http.errorToString(httpResponseCode).c_str();
-    errorMsg += ")";
+    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" +
+                     String(http.errorToString(httpResponseCode).c_str()) + ")";
     Serial.println(errorMsg);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
@@ -310,20 +90,15 @@ String getVictronToken() {
     return token;
   }
 
-  // Check if we got a successful response
   if (httpResponseCode != HTTP_CODE_OK) {
     Serial.print("Unexpected HTTP response: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: ";
-    errorMsg += httpResponseCode;
+    String errorMsg = "HTTP Error: " + String(httpResponseCode);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
 
-    // Try to get error message from response
     String response = http.getString();
     Serial.println("Response: " + response);
-
-    // Display first 50 chars of response if available
     if (response.length() > 0) {
       inkplate.print("\nResponse: ");
       if (response.length() > 50) {
@@ -333,12 +108,10 @@ String getVictronToken() {
       }
       inkplate.partialUpdate(true);
     }
-
     http.end();
     return token;
   }
 
-  // If we got here, we have a successful response
   String response = http.getString();
   http.end();
 
@@ -346,38 +119,36 @@ String getVictronToken() {
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
-  if (error) {
-    Serial.print("JSON parsing error: ");
-    Serial.println(error.c_str());
-    String errorMsg = "JSON Error: ";
-    errorMsg += error.c_str();
-    inkplate.print("\n" + errorMsg);
-    inkplate.partialUpdate(true);
-    return token;
-  }
-
-  // Check if token exists in response
-  if (doc.containsKey("token")) {
+  if (!error && doc.containsKey("token")) {
     token = doc["token"].as<String>();
-    Serial.println("Token received successfully");
+    // Store the token and timestamp in memory
+    currentToken = token;
+    tokenTimestamp = millis();
+    Serial.println("New token received and stored in memory");
     return token;
   } else {
-    Serial.println("No token found in response");
-    inkplate.print("\nNo token in response");
-
-    // Try to get error message from response
-    if (doc.containsKey("message")) {
-      String errorMsg = doc["message"].as<String>();
-      Serial.println("Error message: " + errorMsg);
-      inkplate.print("\nError: " + errorMsg);
+    if (error) {
+      Serial.print("JSON parsing error: ");
+      Serial.println(error.c_str());
+      String errorMsg = "JSON Error: " + String(error.c_str());
+      inkplate.print("\n" + errorMsg);
+      inkplate.partialUpdate(true);
     }
-
-    inkplate.partialUpdate(true);
-    return token;
+    if (!doc.containsKey("token")) {
+      Serial.println("No token found in response");
+      inkplate.print("\nNo token in response");
+      if (doc.containsKey("message")) {
+        String errorMsg = doc["message"].as<String>();
+        Serial.println("Error message: " + errorMsg);
+        inkplate.print("\nError: " + errorMsg);
+      }
+      inkplate.partialUpdate(true);
+    }
   }
+  return token;
 }
 
-// Function to get battery data with improved error handling
+// Function to get battery data
 String getBatteryData(String token) {
   HTTPClient http;
   String batteryData = "";
@@ -393,22 +164,18 @@ String getBatteryData(String token) {
   }
 
   Serial.println("Attempting to get battery data...");
-
   http.begin(url);
   http.addHeader("X-Authorization", "Bearer " + token);
-  http.setTimeout(15000);  // 15 second timeout for potentially large responses
+  http.setTimeout(15000);  // 15 second timeout
 
   int httpResponseCode = http.GET();
 
-  // Check HTTP response
+  // Error handling
   if (httpResponseCode <= 0) {
     Serial.print("HTTP error: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: ";
-    errorMsg += httpResponseCode;
-    errorMsg += " (";
-    errorMsg += http.errorToString(httpResponseCode).c_str();
-    errorMsg += ")";
+    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" +
+                     String(http.errorToString(httpResponseCode).c_str()) + ")";
     Serial.println(errorMsg);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
@@ -416,20 +183,15 @@ String getBatteryData(String token) {
     return batteryData;
   }
 
-  // Check if we got a successful response
   if (httpResponseCode != HTTP_CODE_OK) {
     Serial.print("Unexpected HTTP response: ");
     Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: ";
-    errorMsg += httpResponseCode;
+    String errorMsg = "HTTP Error: " + String(httpResponseCode);
     inkplate.print("\n" + errorMsg);
     inkplate.partialUpdate(true);
 
-    // Try to get error message from response
     String response = http.getString();
     Serial.println("Response: " + response);
-
-    // Display first 50 chars of response if available
     if (response.length() > 0) {
       inkplate.print("\nResponse: ");
       if (response.length() > 50) {
@@ -439,16 +201,13 @@ String getBatteryData(String token) {
       }
       inkplate.partialUpdate(true);
     }
-
     http.end();
     return batteryData;
   }
 
-  // If we got here, we have a successful response
   batteryData = http.getString();
   http.end();
 
-  // Check if response is empty
   if (batteryData.length() == 0) {
     Serial.println("Empty response received");
     inkplate.print("\nEmpty response");
@@ -460,12 +219,12 @@ String getBatteryData(String token) {
   return batteryData;
 }
 
+// Function to ensure WiFi is connected
 void ensureWiFiConnected() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi disconnected, (re)connecting...");
     WiFi.disconnect();
     WiFi.begin(ssid, pass);
-
     unsigned long startTime = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - startTime < 10000) {
       delay(500);
@@ -479,108 +238,256 @@ void ensureWiFiConnected() {
   }
 }
 
-
-void setup() {
-  inkplate.begin();
+// Function to draw the combined graph
+void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints,
+                      float solarValues[], float gridInValues[], float gridOutValues[],
+                      int timezoneOffset) {
+  // Clear the display for the graph
   inkplate.clearDisplay();
+
+  // Define graph dimensions and margins
+  int margin = 70;
+  int displayWidth = 1200;  // Inkplate 10 width
+  int displayHeight = 825;  // Inkplate 10 height
+  int graphWidth = displayWidth - 2 * margin;
+  int graphHeight = 400;
+  int graphX = margin;
+  int graphY = margin;
+
+  // Calculate scaling for the right y-axis (power in kW)
+  float maxSolar = findMax(solarValues, numPoints);
+  float maxGridIn = findMax(gridInValues, numPoints);
+  float maxGridOut = findMax(gridOutValues, numPoints);
+  float gridMax = max(maxGridIn, maxGridOut);
+  float rightAxisMax = max(maxSolar, gridMax);
+
+  // Round up to a nice number
+  if (rightAxisMax <= 5) rightAxisMax = 5;
+  else if (rightAxisMax <= 10) rightAxisMax = 10;
+  else if (rightAxisMax <= 20) rightAxisMax = 20;
+  else rightAxisMax = ceil(rightAxisMax / 10) * 10;
+
+  // Draw graph axes
+  inkplate.drawLine(graphX, graphY + graphHeight, graphX + graphWidth, graphY + graphHeight, BLACK);
+  inkplate.drawLine(graphX, graphY, graphX, graphY + graphHeight, BLACK);
+  int rightAxisX = graphX + graphWidth;
+  inkplate.drawLine(rightAxisX, graphY, rightAxisX, graphY + graphHeight, BLACK);
+
+  // Draw left y-axis labels (battery %)
+  inkplate.setTextSize(1);
+  for (int i = 0; i <= 100; i += 25) {
+    int yPos = graphY + graphHeight - (i * graphHeight / 100);
+    inkplate.drawLine(graphX - 3, yPos, graphX, yPos, BLACK);
+    inkplate.setCursor(graphX - 30, yPos - 3);
+    inkplate.print(i);
+    inkplate.print("%");
+  }
+
+  // Draw right y-axis labels (for kW values)
+  int numRightLabels = 10;
+  for (int i = 0; i <= numRightLabels; i++) {
+    float labelValue = (i * 2 * rightAxisMax) / numRightLabels - rightAxisMax;
+    int yPos = graphY + graphHeight - (i * graphHeight) / numRightLabels;
+    inkplate.drawLine(rightAxisX, yPos, rightAxisX + 3, yPos, BLACK);
+    inkplate.setCursor(rightAxisX + 10, yPos - 3);
+    inkplate.print(labelValue, 1);
+    inkplate.print("kW");
+  }
+
+  // Draw x-axis labels (times)
+  for (int i = 0; i < numPoints; i += max(1, numPoints / 10)) {
+    int xPos = graphX + (i * graphWidth) / (numPoints - 1);
+    String timeStr = formatTime(timestamps[i], timezoneOffset);
+    inkplate.setCursor(xPos - 20, graphY + graphHeight + 10);
+    inkplate.print(timeStr);
+  }
+
+  // Draw battery percentage line graph
+  for (int i = 0; i < numPoints - 1; i++) {
+    int x1 = graphX + (i * graphWidth) / (numPoints - 1);
+    int y1 = graphY + graphHeight - (percentages[i] * graphHeight / 100);
+    int x2 = graphX + ((i + 1) * graphWidth) / (numPoints - 1);
+    int y2 = graphY + graphHeight - (percentages[i + 1] * graphHeight / 100);
+    inkplate.drawLine(x1, y1, x2, y2, BLACK);
+  }
+
+  // Calculate bar widths
+  int barWidth = max(5, min(20, graphWidth / numPoints / 4));
+  int barSpacing = barWidth + 2;
+
+  // Create combined grid values
+  float gridValues[MAX_POINTS];
+  for (int i = 0; i < numPoints; i++) {
+    gridValues[i] = gridInValues[i] - gridOutValues[i];
+  }
+
+  // Find maximum absolute grid value for scaling
+  float maxAbsGrid = 0;
+  for (int i = 0; i < numPoints; i++) {
+    float absValue = abs(gridValues[i]);
+    if (absValue > maxAbsGrid) {
+      maxAbsGrid = absValue;
+    }
+  }
+
+  if (maxAbsGrid > rightAxisMax) {
+    rightAxisMax = maxAbsGrid;
+    if (rightAxisMax <= 5) rightAxisMax = 5;
+    else if (rightAxisMax <= 10) rightAxisMax = 10;
+    else if (rightAxisMax <= 20) rightAxisMax = 20;
+    else rightAxisMax = ceil(rightAxisMax / 10) * 10;
+  }
+
+  // Draw bars for each metric at each time point
+  for (int i = 0; i < numPoints; i++) {
+    int xPosBase = graphX + (i * graphWidth) / (numPoints - 1);
+    int solarXPos = xPosBase - barWidth - 2;
+    if (solarXPos < graphX) solarXPos = graphX;
+    int gridXPos = xPosBase + 2;
+
+    // Draw solar production bars
+    if (solarValues[i] > 0) {
+      int barHeight = (solarValues[i] / rightAxisMax) * graphHeight;
+      int yPos = graphY + graphHeight - barHeight;
+      inkplate.drawRect(solarXPos, yPos, barWidth, barHeight, BLACK);
+      // Fill pattern
+      for (int y = yPos; y < yPos + barHeight; y += 2) {
+        inkplate.drawLine(solarXPos, y, solarXPos + barWidth, y, BLACK);
+      }
+    }
+
+    // Draw grid bar
+    float gridValue = gridValues[i];
+    if (gridValue != 0) {
+      int barHeight;
+      int yPos;
+      if (gridValue > 0) {  // Grid consumption
+        barHeight = (gridValue / rightAxisMax) * graphHeight;
+        yPos = graphY + graphHeight - barHeight;
+      } else {  // Grid overflow
+        barHeight = (abs(gridValue) / rightAxisMax) * graphHeight;
+        yPos = graphY + graphHeight;
+      }
+
+      if (gridValue > 0) {
+        inkplate.drawRect(gridXPos, yPos, barWidth, barHeight, BLACK);
+        // Diagonal hatching
+        for (int y = yPos; y < yPos + barHeight; y += 3) {
+          inkplate.drawLine(gridXPos, y, gridXPos + barWidth, y + 3, BLACK);
+        }
+      } else {
+        inkplate.drawRect(gridXPos, yPos, barWidth, barHeight, BLACK);
+        // Vertical lines fill
+        for (int x = gridXPos; x < gridXPos + barWidth; x += 2) {
+          inkplate.drawLine(x, yPos, x, yPos + barHeight, BLACK);
+        }
+      }
+    }
+  }
+
+  // Add legend
+  int legendX = graphX + graphWidth + 20;
+  int legendY = graphY;
+
+  inkplate.setCursor(legendX, legendY);
+  inkplate.print("Battery:");
+  inkplate.drawLine(legendX - 10, legendY + 5, legendX - 10 + 20, legendY + 5, BLACK);
+  legendY += 20;
+
+  inkplate.setCursor(legendX, legendY);
+  inkplate.print("Solar:");
+  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
+  for (int y = legendY - 8; y < legendY - 8 + 10; y += 2) {
+    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y, BLACK);
+  }
+  legendY += 20;
+
+  inkplate.setCursor(legendX, legendY);
+  inkplate.print("Grid:");
+  inkplate.drawRect(legendX - 15, legendY - 8, 20, 10, BLACK);
+  for (int y = legendY - 8; y < legendY + 2; y += 3) {
+    inkplate.drawLine(legendX - 15, y, legendX - 15 + 20, y + 3, BLACK);
+  }
+  inkplate.drawRect(legendX - 15, legendY + 10, 20, 10, BLACK);
+  for (int x = legendX - 15; x < legendX + 5; x += 2) {
+    inkplate.drawLine(x, legendY + 10, x, legendY + 20, BLACK);
+  }
+  legendY += 30;
+
+  inkplate.setCursor(legendX + 5, legendY - 20);
+  inkplate.print("= In (above)");
+  legendY += 10;
+  inkplate.setCursor(legendX + 5, legendY - 10);
+  inkplate.print("= Out (below)");
+
+  // Add title and axis labels
+  inkplate.setTextSize(2);
+  inkplate.setCursor(graphX + graphWidth / 2 - 100, graphY - 20);
+  inkplate.print("Solaary");
+  inkplate.setTextSize(1);
+  inkplate.setCursor(graphX + graphWidth / 2 - 20, graphY + graphHeight + 30);
+  inkplate.print("Time");
+  inkplate.setCursor(graphX - 25, graphY + graphHeight / 2);
+  inkplate.print("Battery %");
+  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2);
+  inkplate.print("Power (kW)");
+  inkplate.setCursor(rightAxisX + 20, graphY + graphHeight / 2 + 15);
+  inkplate.print("(+in, -out)");
+
+  // Display the graph
   inkplate.display();
-  Serial.begin(9600);  // must be 9600 for arduino IDE to understand
-  Serial.println("Starting Victron display...");
+}
+
+// Main update function
+void runDataUpdate() {
+  Serial.println("Running data update...");
+  inkplate.print("\nUpdating data...");
+  inkplate.partialUpdate(true);
 
   ensureWiFiConnected();
 
-  // Retry logic for getting token
+  // Get token
+  String token = getVictronToken();
+  if (token == "") {
+    Serial.println("Failed to get Victron token");
+    inkplate.print("\nFailed to get token");
+    inkplate.partialUpdate(true);
+    return;
+  }
+
+  // Get battery data with retries
+  String batteryData = "";
   int maxRetries = 3;
-  int retryDelay = 5000;  // 5 seconds between retries
-  String token = "";
+  int retryDelay = 5000;
 
   for (int attempt = 1; attempt <= maxRetries; attempt++) {
     Serial.print("Attempt ");
     Serial.print(attempt);
-    Serial.println(" to get Victron token");
-
-    inkplate.print("\nGetting token (attempt ");
+    Serial.println(" to get battery data");
+    inkplate.print("\nGetting data (attempt ");
     inkplate.print(attempt);
     inkplate.print("/");
     inkplate.print(maxRetries);
     inkplate.print(")");
     inkplate.partialUpdate(true);
 
-    token = getVictronToken();
-
-    if (token != "") {
-      Serial.println("Successfully got token");
-      inkplate.print("\nGot token");
+    batteryData = getBatteryData(token);
+    if (batteryData != "") {
+      Serial.println("Successfully got battery data");
+      inkplate.print("\nGot data");
       inkplate.partialUpdate(true);
       break;
     }
-
     if (attempt < maxRetries) {
-      Serial.print("Waiting ");
-      Serial.print(retryDelay / 1000);
-      Serial.println(" seconds before retry");
-      inkplate.print("\nRetry in ");
-      inkplate.print(retryDelay / 1000);
-      inkplate.print(" secs");
-      inkplate.partialUpdate(true);
       delay(retryDelay);
     }
   }
 
-  if (token == "") {
-    Serial.println("Failed to get Victron token after retries");
-    inkplate.print("\nFailed to get token");
-    inkplate.partialUpdate(true);
-    // Continue anyway to show what we can
-  }
-
-  // Retry logic for getting battery data
-  String batteryData = "";
-  maxRetries = 3;
-  retryDelay = 5000;
-
-  if (token != "") {
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      Serial.print("Attempt ");
-      Serial.print(attempt);
-      Serial.println(" to get battery data");
-
-      inkplate.print("\nGetting data (attempt ");
-      inkplate.print(attempt);
-      inkplate.print("/");
-      inkplate.print(maxRetries);
-      inkplate.print(")");
-      inkplate.partialUpdate(true);
-
-      batteryData = getBatteryData(token);
-
-      if (batteryData != "") {
-        Serial.println("Successfully got battery data");
-        inkplate.print("\nGot data");
-        inkplate.partialUpdate(true);
-        break;
-      }
-
-      if (attempt < maxRetries) {
-        Serial.print("Waiting ");
-        Serial.print(retryDelay / 1000);
-        Serial.println(" seconds before retry");
-        inkplate.print("\nRetry in ");
-        inkplate.print(retryDelay / 1000);
-        inkplate.print(" secs");
-        inkplate.partialUpdate(true);
-        delay(retryDelay);
-      }
-    }
-  }
-
   if (batteryData != "") {
-    // Parse the battery data JSON
     JsonDocument batteryDoc;
     DeserializationError batteryError = deserializeJson(batteryDoc, batteryData);
 
     if (!batteryError) {
-      // Check if required data exists in the response
       if (!batteryDoc["records"].containsKey("bs")) {
         Serial.println("Error: 'bs' not found in records");
         inkplate.print("\nError: Missing 'bs'");
@@ -598,21 +505,18 @@ void setup() {
         return;
       }
 
-      // Continue with your existing data processing code...
       float percentages[MAX_POINTS];
       uint64_t timestamps[MAX_POINTS];
       float solarValues[MAX_POINTS];
       float gridInValues[MAX_POINTS];
       float gridOutValues[MAX_POINTS];
 
-      // Initialize arrays
       for (int i = 0; i < MAX_POINTS; i++) {
         solarValues[i] = 0;
         gridInValues[i] = 0;
         gridOutValues[i] = 0;
       }
 
-      // Determine if we need to downsample
       int step = 1;
       int actualNumPoints;
 
@@ -627,14 +531,14 @@ void setup() {
       for (int i = 0, pointIndex = 0; i < numPoints && pointIndex < MAX_POINTS; i += step, pointIndex++) {
         if (i < bsArray.size()) {
           JsonArray bsEntry = bsArray[i];
-          if (bsEntry.size() >= 2) {  // Ensure we have at least timestamp and value
+          if (bsEntry.size() >= 2) {
             timestamps[pointIndex] = bsEntry[0].as<uint64_t>();
             percentages[pointIndex] = bsEntry[1].as<float>();
           }
         }
       }
 
-      // Safely extract other metrics
+      // Extract solar data
       if (batteryDoc["records"].containsKey("Pdc")) {
         JsonArray pdcArray = batteryDoc["records"]["Pdc"];
         for (int i = 0, pointIndex = 0; i < pdcArray.size() && pointIndex < actualNumPoints; i += step, pointIndex++) {
@@ -652,7 +556,7 @@ void setup() {
         inkplate.partialUpdate(true);
       }
 
-      // Similar safe extraction for grid data...
+      // Extract grid data
       if (batteryDoc["records"].containsKey("grid_history_from")) {
         JsonArray gridFromArray = batteryDoc["records"]["grid_history_from"];
         for (int i = 0, pointIndex = 0; i < gridFromArray.size() && pointIndex < actualNumPoints; i += step, pointIndex++) {
@@ -677,16 +581,14 @@ void setup() {
         }
       }
 
-      // Draw the graph if we have valid data
       if (actualNumPoints > 0) {
         drawCombinedGraph(percentages, timestamps, actualNumPoints,
-                          solarValues, gridInValues, gridOutValues, 2);
+                         solarValues, gridInValues, gridOutValues, 2);
       } else {
         Serial.println("Error: No valid data points to display");
         inkplate.print("\nError: No data");
         inkplate.partialUpdate(true);
       }
-
     } else {
       Serial.println("JSON parsing error:");
       Serial.println(batteryError.c_str());
@@ -697,10 +599,66 @@ void setup() {
     inkplate.print("\nNo data received");
     inkplate.partialUpdate(true);
   }
+}
 
-  Serial.println("Setup completed");
+void setup() {
+  inkplate.begin();
+  inkplate.clearDisplay();
+  inkplate.display();
+  Serial.begin(9600);
+  Serial.println("Starting Victron display...");
+
+  // Connect to WiFi
+  WiFi.begin(ssid, pass);
+  inkplate.print("Connecting to WiFi...");
+  inkplate.partialUpdate(true);
+
+  unsigned long wifiStartTime = millis();
+  const unsigned long wifiTimeout = 30000; // 30 second timeout
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    inkplate.print('.');
+    inkplate.partialUpdate(true);
+
+    if (millis() - wifiStartTime > wifiTimeout) {
+      Serial.println("WiFi connection timeout");
+      inkplate.print("\nWiFi timeout");
+      inkplate.partialUpdate(true);
+      break;
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    inkplate.println("\nWiFi connected");
+    Serial.println("WiFi connected");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    inkplate.println("\nWiFi failed");
+    Serial.println("WiFi connection failed");
+  }
+  inkplate.partialUpdate(true);
+
+  // Run initial data update
+  runDataUpdate();
+  lastUpdateTime = millis();
 }
 
 void loop() {
-  // Empty loop
+  // Check if it's time for an update
+  unsigned long currentTime = millis();
+
+  // Handle millis() overflow (every ~50 days)
+  if (currentTime < lastUpdateTime) {
+    lastUpdateTime = 0;
+  }
+
+  if ((currentTime - lastUpdateTime) >= UPDATE_INTERVAL) {
+    lastUpdateTime = currentTime;
+    runDataUpdate();
+  }
+
+  // Small delay to prevent watchdog issues
+  delay(1000);
 }
