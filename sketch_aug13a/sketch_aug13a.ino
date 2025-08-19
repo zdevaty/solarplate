@@ -1,3 +1,4 @@
+
 #include "Inkplate.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -10,6 +11,8 @@ Inkplate inkplate(INKPLATE_1BIT);
 #define BLACK 1
 #define WHITE 0
 #define MAX_POINTS 100                                 // Maximum number of points to plot
+#define DISPLAY_WIDTH 1200                             // Inkplate 10 width
+#define DISPLAY_HEIGHT 825                             // Inkplate 10 height
 const unsigned long TOKEN_VALIDITY_PERIOD = 43200000;  // 12 hours in milliseconds
 const unsigned long UPDATE_INTERVAL = 600000;          // 10 minutes in milliseconds
 
@@ -49,7 +52,8 @@ void runDataUpdate();
 void parseStatusData(String data);
 void parseBatterySummaryData(String data);
 void parseSolarChargerSummaryData(String data);
-void parseStatsData(String data);
+bool parseJsonCommon(JsonDocument &doc, String data, String context, JsonObject &dataObj);
+bool handleHttpError(HTTPClient &http, int httpResponseCode, String context, String &errorMsg);
 
 // Helper function to format a timestamp into a time string
 String formatTime(uint64_t timestampMs, int timezoneOffsetHours) {
@@ -74,6 +78,66 @@ float findMax(float array[], int length) {
   return maxVal;
 }
 
+// Helper function to handle HTTP errors
+bool handleHttpError(HTTPClient &http, int httpResponseCode, String context, String &errorMsg) {
+  if (httpResponseCode <= 0) {
+    Serial.print("HTTP error in " + context + ": ");
+    Serial.println(httpResponseCode);
+    errorMsg = "HTTP Error in " + context + ": " + String(httpResponseCode) + " (" + String(http.errorToString(httpResponseCode).c_str()) + ")";
+    Serial.println(errorMsg);
+    inkplate.print("\n" + errorMsg);
+    inkplate.partialUpdate(true);
+    http.end();
+    return false;
+  }
+  if (httpResponseCode != HTTP_CODE_OK) {
+    Serial.print("Unexpected HTTP response in " + context + ": ");
+    Serial.println(httpResponseCode);
+    errorMsg = "HTTP Error in " + context + ": " + String(httpResponseCode);
+    inkplate.print("\n" + errorMsg);
+    inkplate.partialUpdate(true);
+    String response = http.getString();
+    Serial.println("Response: " + response);
+    if (response.length() > 0) {
+      inkplate.print("\nResponse: ");
+      if (response.length() > 50) {
+        inkplate.print(response.substring(0, 50) + "...");
+      } else {
+        inkplate.print(response);
+      }
+      inkplate.partialUpdate(true);
+    }
+    http.end();
+    return false;
+  }
+  return true;
+}
+
+// Helper function for common JSON parsing steps
+bool parseJsonCommon(JsonDocument &doc, String data, String context, JsonObject &dataObj) {
+  DeserializationError error = deserializeJson(doc, data);
+  if (error) {
+    Serial.print("Error parsing " + context + " data: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+  if (!doc["success"].as<bool>()) {
+    Serial.println(context + " request was not successful");
+    return false;
+  }
+  JsonObject records = doc["records"];
+  if (records.isNull()) {
+    Serial.println("No records in " + context + " data");
+    return false;
+  }
+  dataObj = records["data"];
+  if (dataObj.isNull()) {
+    Serial.println("No data in " + context + " records");
+    return false;
+  }
+  return true;
+}
+
 // Function to authenticate and get the token
 String getVictronToken() {
   // If we have a valid token in memory, return it
@@ -93,37 +157,12 @@ String getVictronToken() {
   http.addHeader("Pragma", "no-cache");
   http.setTimeout(10000);  // 10 second timeout
   int httpResponseCode = http.POST(payload);
-  // Error handling
-  if (httpResponseCode <= 0) {
-    Serial.print("HTTP error: ");
-    Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" + String(http.errorToString(httpResponseCode).c_str()) + ")";
-    Serial.println(errorMsg);
-    inkplate.print("\n" + errorMsg);
-    inkplate.partialUpdate(true);
-    http.end();
+
+  String errorMsg;
+  if (!handleHttpError(http, httpResponseCode, "getVictronToken", errorMsg)) {
     return token;
   }
-  if (httpResponseCode != HTTP_CODE_OK) {
-    Serial.print("Unexpected HTTP response: ");
-    Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode);
-    inkplate.print("\n" + errorMsg);
-    inkplate.partialUpdate(true);
-    String response = http.getString();
-    Serial.println("Response: " + response);
-    if (response.length() > 0) {
-      inkplate.print("\nResponse: ");
-      if (response.length() > 50) {
-        inkplate.print(response.substring(0, 50) + "...");
-      } else {
-        inkplate.print(response);
-      }
-      inkplate.partialUpdate(true);
-    }
-    http.end();
-    return token;
-  }
+
   String response = http.getString();
   http.end();
   // Parse JSON response
@@ -163,11 +202,9 @@ String getEndpointData(String token, String endpoint, String instance) {
   HTTPClient http;
   String result = "";
   String url = "https://vrmapi.victronenergy.com/v2/installations/" + String(installationId) + endpoint;
-
   if (instance != "") {
     url += "?instance=" + instance;
   }
-
   ensureWiFiConnected();
   if (token == "") {
     Serial.println("Error: No token provided");
@@ -175,57 +212,25 @@ String getEndpointData(String token, String endpoint, String instance) {
     inkplate.partialUpdate(true);
     return result;
   }
-
   Serial.println("Attempting to get data from: " + url);
   http.begin(url);
   http.addHeader("X-Authorization", "Bearer " + token);
   http.setTimeout(15000);  // 15 second timeout
-
   int httpResponseCode = http.GET();
 
-  // Error handling
-  if (httpResponseCode <= 0) {
-    Serial.print("HTTP error: ");
-    Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode) + " (" + String(http.errorToString(httpResponseCode).c_str()) + ")";
-    Serial.println(errorMsg);
-    inkplate.print("\n" + errorMsg);
-    inkplate.partialUpdate(true);
-    http.end();
-    return result;
-  }
-
-  if (httpResponseCode != HTTP_CODE_OK) {
-    Serial.print("Unexpected HTTP response: ");
-    Serial.println(httpResponseCode);
-    String errorMsg = "HTTP Error: " + String(httpResponseCode);
-    inkplate.print("\n" + errorMsg);
-    inkplate.partialUpdate(true);
-    String response = http.getString();
-    Serial.println("Response: " + response);
-    if (response.length() > 0) {
-      inkplate.print("\nResponse: ");
-      if (response.length() > 50) {
-        inkplate.print(response.substring(0, 50) + "...");
-      } else {
-        inkplate.print(response);
-      }
-      inkplate.partialUpdate(true);
-    }
-    http.end();
+  String errorMsg;
+  if (!handleHttpError(http, httpResponseCode, "getEndpointData", errorMsg)) {
     return result;
   }
 
   result = http.getString();
   http.end();
-
   if (result.length() == 0) {
     Serial.println("Empty response received from " + endpoint);
     inkplate.print("\nEmpty response from " + endpoint);
     inkplate.partialUpdate(true);
     return "";
   }
-
   Serial.println("Data received successfully from " + endpoint);
   return result;
 }
@@ -252,32 +257,12 @@ void ensureWiFiConnected() {
 // Function to parse Status data
 void parseStatusData(String data) {
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, data);
-
-  if (error) {
-    Serial.print("Error parsing Status data: ");
-    Serial.println(error.c_str());
+  JsonObject dataObj;
+  if (!parseJsonCommon(doc, data, "Status", dataObj)) {
     return;
   }
 
-  if (!doc["success"].as<bool>()) {
-    Serial.println("Status data request was not successful");
-    return;
-  }
-
-  JsonObject records = doc["records"];
-  if (records.isNull()) {
-    Serial.println("No records in Status data");
-    return;
-  }
-
-  JsonObject dataObj = records["data"];
-  if (dataObj.isNull()) {
-    Serial.println("No data in Status records");
-    return;
-  }
-
-  // Parse AC Loads (sum of output powers)
+  // Calculate AC loads from output power phases
   float acLoads = 0;
   if (dataObj.containsKey("29") && dataObj.containsKey("30") && dataObj.containsKey("31")) {
     acLoads += dataObj["29"]["valueFloat"].as<float>();  // OP1
@@ -286,7 +271,15 @@ void parseStatusData(String data) {
     currentDashboardData.acLoads = acLoads;
   }
 
-  // Parse System State (VE.Bus state)
+  // Calculate grid power from input power phases
+  if (dataObj.containsKey("17") && dataObj.containsKey("18") && dataObj.containsKey("19")) {
+    float gridPower = 0;
+    gridPower += dataObj["17"]["valueFloat"].as<float>();  // IP1
+    gridPower += dataObj["18"]["valueFloat"].as<float>();  // IP2
+    gridPower += dataObj["19"]["valueFloat"].as<float>();  // IP3
+    currentDashboardData.gridPower = gridPower;
+  }
+
   if (dataObj.containsKey("40")) {
     currentDashboardData.systemState = dataObj["40"]["value"].as<String>();
   }
@@ -295,47 +288,24 @@ void parseStatusData(String data) {
 // Function to parse Battery Summary data
 void parseBatterySummaryData(String data) {
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, data);
-
-  if (error) {
-    Serial.print("Error parsing Battery Summary data: ");
-    Serial.println(error.c_str());
+  JsonObject dataObj;
+  if (!parseJsonCommon(doc, data, "Battery Summary", dataObj)) {
     return;
   }
-
-  if (!doc["success"].as<bool>()) {
-    Serial.println("Battery Summary request was not successful");
-    return;
-  }
-
-  JsonObject records = doc["records"];
-  if (records.isNull()) {
-    Serial.println("No records in Battery Summary data");
-    return;
-  }
-
-  JsonObject dataObj = records["data"];
-  if (dataObj.isNull()) {
-    Serial.println("No data in Battery Summary records");
-    return;
-  }
-
   // Parse Battery SOC
   if (dataObj.containsKey("51")) {
     currentDashboardData.batterySOC = dataObj["51"]["valueFloat"].as<float>();
   }
-
   // Parse Battery Voltage
   if (dataObj.containsKey("47")) {
     currentDashboardData.batteryVoltage = dataObj["47"]["valueFloat"].as<float>();
   }
-
   // Parse Battery Current (positive = charging, negative = discharging)
   if (dataObj.containsKey("49")) {
     currentDashboardData.batteryCurrent = dataObj["49"]["valueFloat"].as<float>();
     currentDashboardData.batteryPower = currentDashboardData.batteryVoltage * currentDashboardData.batteryCurrent;
+    Serial.println(currentDashboardData.batteryPower);
   }
-
   // Determine if battery is charging, discharging, or idle
   if (abs(currentDashboardData.batteryCurrent) < 0.5) {
     currentDashboardData.batteryState = "Idle";
@@ -349,62 +319,21 @@ void parseBatterySummaryData(String data) {
 // Function to parse Solar Charger Summary data
 void parseSolarChargerSummaryData(String data) {
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, data);
-
-  if (error) {
-    Serial.print("Error parsing Solar Charger Summary data: ");
-    Serial.println(error.c_str());
+  JsonObject dataObj;
+  if (!parseJsonCommon(doc, data, "Solar Charger Summary", dataObj)) {
     return;
   }
-
-  if (!doc["success"].as<bool>()) {
-    Serial.println("Solar Charger Summary request was not successful");
-    return;
-  }
-
-  JsonObject records = doc["records"];
-  if (records.isNull()) {
-    Serial.println("No records in Solar Charger Summary data");
-    return;
-  }
-
-  JsonObject dataObj = records["data"];
-  if (dataObj.isNull()) {
-    Serial.println("No data in Solar Charger Summary records");
-    return;
-  }
-
   // Parse PV Power (Battery watts)
   if (dataObj.containsKey("107")) {
     currentDashboardData.pvPower = dataObj["107"]["valueFloat"].as<float>();
   }
 }
 
-// Function to parse Stats data
-void parseStatsData(String data) {
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, data);
-
-  if (error) {
-    Serial.print("Error parsing Stats data: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  if (!doc["success"].as<bool>()) {
-    Serial.println("Stats request was not successful");
-    return;
-  }
-
-  // This function is already handled in drawCombinedGraph
-  // We'll keep it here for completeness but not implement parsing again
-}
-
 // Function to draw the dashboard below the graph
 void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvPower, String systemState, float batterySOC) {
   int margin = 43;
-  int displayWidth = 1200;                      // Inkplate 10 width
-  int displayHeight = 825;                      // Inkplate 10 height
+  int displayWidth = DISPLAY_WIDTH;             // Inkplate 10 width
+  int displayHeight = DISPLAY_HEIGHT;           // Inkplate 10 height
   int graphHeight = 400;                        // Height of the graph above
   int dashboardY = margin + graphHeight + 135;  // Start Y position for dashboard (below graph)
 
@@ -602,11 +531,10 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   // Helper function to draw an orthogonal connection between two points with an arrow
   auto drawOrthogonalConnection = [&](int startX, int startY, int endX, int endY, int arrowDir) {
     // Draw the first segment (horizontal)
-      inkplate.drawLine(startX, startY, endX, startY, BLACK);
-    
-    // Draw the second segment (vertical)
-      inkplate.drawLine(endX, startY, endX, endY, BLACK);
+    inkplate.drawLine(startX, startY, endX, startY, BLACK);
 
+    // Draw the second segment (vertical)
+    inkplate.drawLine(endX, startY, endX, endY, BLACK);
     int arrowX = (startX + endX) / 2;
     int arrowY = startY;
     drawArrowOnLine(arrowX, arrowY, arrowDir);
@@ -616,7 +544,7 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   if (gridPower > 10) {
     drawOrthogonalConnection(
       gridBoxX + boxWidth, gridCenterY,  // Start at right center of grid box
-      systemBoxX-30, systemBoxY,         // End at left center of system box
+      systemCenterX - 30, systemBoxY,       // End at left center of system box
       0                                  // Arrow direction: right
     );
   }
@@ -625,7 +553,7 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   if (gridPower < -10) {
     drawOrthogonalConnection(
       gridBoxX + boxWidth, gridCenterY,  // End at right center of grid box
-      systemBoxX-30, systemBoxY,         // Start at left center of system box
+      systemCenterX - 30, systemBoxY,       // Start at left center of system box
       2                                  // Arrow direction: left
     );
   }
@@ -633,9 +561,9 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   // 3. PV to System connection (always when PV is producing)
   if (pvPower > 10) {
     drawOrthogonalConnection(
-      pvBoxX, pvCenterY,                         // Start at top center of PV box
-      systemCenterX+30, systemBoxY + boxHeight,  // End at bottom center of system box
-      2                                     // Arrow direction: left
+      pvBoxX, pvCenterY,                           // Start at top center of PV box
+      systemCenterX + 30, systemBoxY + boxHeight,  // End at bottom center of system box
+      2                                            // Arrow direction: left
     );
   }
 
@@ -646,20 +574,20 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
       dir = 0;
     }
     drawOrthogonalConnection(
-        batteryBoxX+boxWidth, batteryCenterY,
-        systemCenterX-30, systemBoxY + boxHeight,  
-        dir
-      );
+      batteryBoxX + boxWidth, batteryCenterY,
+      systemCenterX - 30, systemBoxY + boxHeight,
+      dir);
   }
 
   // 5. System to Load connection (always when loads are active)
   if (acLoads > 10) {
     drawOrthogonalConnection(
       loadBoxX, loadCenterY,
-      systemCenterX+30, systemBoxY,
-      0                          // Arrow direction: right
+      systemCenterX + 30, systemBoxY,
+      0  // Arrow direction: right
     );
   }
+  Serial.println("updated dashboard");
 
   // Update display
   inkplate.partialUpdate(true);
@@ -674,8 +602,8 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
 
   // Define graph dimensions and margins
   int margin = 43;
-  int displayWidth = 1200;  // Inkplate 10 width
-  int displayHeight = 825;  // Inkplate 10 height
+  int displayWidth = DISPLAY_WIDTH;    // Inkplate 10 width
+  int displayHeight = DISPLAY_HEIGHT;  // Inkplate 10 height
   int graphWidth = displayWidth - 2 * margin - 5;
   int graphHeight = 350;
   int graphX = margin;
@@ -822,7 +750,7 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
   }
   legendX += 23;
   inkplate.setCursor(legendX, legendY);
-  inkplate.print("Sit (vstup/pretoky) [kWh / h]");
+  inkplate.print("Sit (vstup/pretoky) [kWh]");
 
   // Add title and axis labels
   inkplate.setTextSize(3);
@@ -834,6 +762,7 @@ void drawCombinedGraph(float percentages[], uint64_t timestamps[], int numPoints
 void drawThickLineWithCircles(int x1, int y1, int x2, int y2, int thickness, int color) {
   // Calculate the distance between the two points
   float distance = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
+
   // If the line is very short, just draw a circle at the midpoint
   if (distance < thickness) {
     int midX = (x1 + x2) / 2;
@@ -841,8 +770,10 @@ void drawThickLineWithCircles(int x1, int y1, int x2, int y2, int thickness, int
     inkplate.fillCircle(midX, midY, thickness / 2, color);
     return;
   }
+
   // Calculate the number of circles we need to draw (one every thickness pixels)
   int numCircles = distance / (thickness * 0.5);  // Some overlap between circles
+
   // Draw circles along the line
   for (int i = 0; i <= numCircles; i++) {
     float t = (float)i / numCircles;
@@ -850,16 +781,36 @@ void drawThickLineWithCircles(int x1, int y1, int x2, int y2, int thickness, int
     int y = y1 + (y2 - y1) * t;
     inkplate.fillCircle(x, y, thickness / 2, color);
   }
+
   // Also draw circles at the endpoints to ensure full coverage
   inkplate.fillCircle(x1, y1, thickness / 2, color);
   inkplate.fillCircle(x2, y2, thickness / 2, color);
 }
-// Main update function
-void runDataUpdate() {
-  Serial.println("Running data update...");
-  inkplate.print("\nUpdating data...");
+
+// Add these to your global variables
+unsigned long lastGraphUpdateTime = 0;
+unsigned long lastDashboardUpdateTime = 0;
+const unsigned long GRAPH_UPDATE_INTERVAL = 120000;  // 2 minutes
+const unsigned long DASHBOARD_UPDATE_INTERVAL = 30000;  // 30 seconds
+
+struct GraphData {
+  float percentages[MAX_POINTS];
+  uint64_t timestamps[MAX_POINTS];
+  float solarValues[MAX_POINTS];
+  float gridInValues[MAX_POINTS];
+  float gridOutValues[MAX_POINTS];
+  int numPoints = 0;
+  int timezoneOffset = 2;
+};
+
+GraphData currentGraphData;
+
+// Function to update graph data (runs every 2 minutes)
+void updateGraphData() {
+  Serial.println("Updating graph data...");
+  inkplate.print("\nUpdating graph...");
   inkplate.partialUpdate(true);
-  ensureWiFiConnected();
+
   // Get token
   String token = getVictronToken();
   if (token == "") {
@@ -868,38 +819,7 @@ void runDataUpdate() {
     inkplate.partialUpdate(true);
     return;
   }
-  // Initialize dashboard data
-  currentDashboardData = DashboardData();
-  // Get data from all relevant endpoints
-  String statusData = getEndpointData(token, "/widgets/Status", "276");
-  if (statusData != "") {
-    parseStatusData(statusData);
-  }
-  String batterySummaryData = getEndpointData(token, "/widgets/BatterySummary", "512");
-  if (batterySummaryData != "") {
-    parseBatterySummaryData(batterySummaryData);
-  }
-  // Get data from both solar chargers (instances 278 and 279)
-  String solarCharger1Data = getEndpointData(token, "/widgets/SolarChargerSummary", "278");
-  if (solarCharger1Data != "") {
-    parseSolarChargerSummaryData(solarCharger1Data);
-  }
-  String solarCharger2Data = getEndpointData(token, "/widgets/SolarChargerSummary", "279");
-  if (solarCharger2Data != "") {
-    // For the second solar charger, we'll just add its power to the total PV power
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, solarCharger2Data);
-    if (!error && doc["success"].as<bool>()) {
-      JsonObject records = doc["records"];
-      if (!records.isNull()) {
-        JsonObject dataObj = records["data"];
-        if (!dataObj.isNull() && dataObj.containsKey("107")) {
-          float additionalPvPower = dataObj["107"]["valueFloat"].as<float>();
-          currentDashboardData.pvPower += additionalPvPower;
-        }
-      }
-    }
-  }
+
   // Get stats data for the graph
   String statsData = getEndpointData(token, "/stats");
   if (statsData != "") {
@@ -915,7 +835,6 @@ void runDataUpdate() {
 
       JsonArray bsArray = batteryDoc["records"]["bs"];
       int numPoints = bsArray.size();
-
       if (numPoints == 0) {
         Serial.println("Error: No data points in bs array");
         inkplate.print("\nError: No data points");
@@ -937,7 +856,6 @@ void runDataUpdate() {
 
       int step = 1;
       int actualNumPoints;
-
       if (numPoints > MAX_POINTS) {
         step = numPoints / MAX_POINTS + 1;
         actualNumPoints = MAX_POINTS;
@@ -999,30 +917,18 @@ void runDataUpdate() {
         }
       }
 
-      // Get grid power from the latest grid data for dashboard
-      if (actualNumPoints > 0) {
-        float lastGridIn = gridInValues[actualNumPoints - 1];
-        float lastGridOut = gridOutValues[actualNumPoints - 1];
-        currentDashboardData.gridPower = lastGridIn - lastGridOut;
-
-        if (actualNumPoints > 0) {
-          drawCombinedGraph(percentages, timestamps, actualNumPoints,
-                            solarValues, gridInValues, gridOutValues, 2);
-
-          // Draw the dashboard below the graph
-          drawDashboard(
-            currentDashboardData.gridPower,
-            currentDashboardData.acLoads,
-            currentDashboardData.batteryPower,
-            currentDashboardData.pvPower,
-            currentDashboardData.systemState,
-            currentDashboardData.batterySOC);
-        } else {
-          Serial.println("Error: No valid data points to display");
-          inkplate.print("\nError: No data");
-          inkplate.partialUpdate(true);
-        }
+      // Store the data in the global graph data structure
+      for (int i = 0; i < actualNumPoints; i++) {
+        currentGraphData.percentages[i] = percentages[i];
+        currentGraphData.timestamps[i] = timestamps[i];
+        currentGraphData.solarValues[i] = solarValues[i];
+        currentGraphData.gridInValues[i] = gridInValues[i];
+        currentGraphData.gridOutValues[i] = gridOutValues[i];
       }
+      currentGraphData.numPoints = actualNumPoints;
+
+      // Update the graph display
+      updateGraphDisplay();
     } else {
       Serial.println("JSON parsing error:");
       Serial.println(batteryError.c_str());
@@ -1034,18 +940,116 @@ void runDataUpdate() {
     inkplate.partialUpdate(true);
   }
 }
+
+// Function to update dashboard data (runs every 5 seconds)
+void updateDashboardData() {
+  Serial.println("Updating dashboard data...");
+
+  // Get token
+  String token = getVictronToken();
+  if (token == "") {
+    Serial.println("Failed to get Victron token");
+    inkplate.print("\nFailed to get token");
+    inkplate.partialUpdate(true);
+    return;
+  }
+
+  // Initialize dashboard data
+  DashboardData newDashboardData;
+
+  // Get dashboard data from endpoints
+  String statusData = getEndpointData(token, "/widgets/Status", "276");
+  if (statusData != "") {
+    parseStatusData(statusData);
+  }
+
+  String batterySummaryData = getEndpointData(token, "/widgets/BatterySummary", "512");
+  if (batterySummaryData != "") {
+    parseBatterySummaryData(batterySummaryData);
+  }
+
+  // Get data from both solar chargers
+  String solarCharger1Data = getEndpointData(token, "/widgets/SolarChargerSummary", "278");
+  if (solarCharger1Data != "") {
+    parseSolarChargerSummaryData(solarCharger1Data);
+  }
+
+  String solarCharger2Data = getEndpointData(token, "/widgets/SolarChargerSummary", "279");
+  if (solarCharger2Data != "") {
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, solarCharger2Data);
+    if (!error && doc["success"].as<bool>()) {
+      JsonObject records = doc["records"];
+      if (!records.isNull()) {
+        JsonObject dataObj = records["data"];
+        if (!dataObj.isNull() && dataObj.containsKey("107")) {
+          float additionalPvPower = dataObj["107"]["valueFloat"].as<float>();
+          currentDashboardData.pvPower += additionalPvPower;
+        }
+      }
+    }
+  }
+  Serial.println("got all data, updating dashboard...");
+
+    updateDashboardDisplay();
+}
+
+// Function to draw only the graph area
+void updateGraphDisplay() {
+  int margin = 43;
+  int graphHeight = 400;
+
+  // Clear only the graph area
+  inkplate.fillRect(0, margin, DISPLAY_WIDTH, graphHeight, WHITE);
+
+  // Draw the graph with current data
+  drawCombinedGraph(
+    currentGraphData.percentages,
+    currentGraphData.timestamps,
+    currentGraphData.numPoints,
+    currentGraphData.solarValues,
+    currentGraphData.gridInValues,
+    currentGraphData.gridOutValues,
+    currentGraphData.timezoneOffset
+  );
+  inkplate.display();
+}
+
+// Function to draw only the dashboard area
+void updateDashboardDisplay() {
+  int margin = 43;
+  int graphHeight = 400;
+  int dashboardY = margin + graphHeight + 135;
+
+  // Clear only the dashboard area
+  inkplate.fillRect(0, dashboardY, DISPLAY_WIDTH, DISPLAY_HEIGHT - dashboardY, WHITE);
+
+  // Draw the dashboard with current data
+  drawDashboard(
+    currentDashboardData.gridPower,
+    currentDashboardData.acLoads,
+    currentDashboardData.batteryPower,
+    currentDashboardData.pvPower,
+    currentDashboardData.systemState,
+    currentDashboardData.batterySOC
+  );
+}
+
+// Modified setup function
 void setup() {
   inkplate.begin();
   inkplate.clearDisplay();
   inkplate.display();
   Serial.begin(9600);
   Serial.println("Starting Victron display...");
-  // Connect to WiFi
+
+  // Connect to WiFi (existing code remains the same)
   WiFi.begin(ssid, pass);
   inkplate.print("Connecting to WiFi...");
   inkplate.partialUpdate(true);
   unsigned long wifiStartTime = millis();
-  const unsigned long wifiTimeout = 30000;  // 30 second timeout
+  const unsigned long wifiTimeout = 30000;
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     inkplate.print('.');
@@ -1057,6 +1061,7 @@ void setup() {
       break;
     }
   }
+
   if (WiFi.status() == WL_CONNECTED) {
     inkplate.println("\nWiFi connected");
     Serial.println("WiFi connected");
@@ -1067,21 +1072,40 @@ void setup() {
     Serial.println("WiFi connection failed");
   }
   inkplate.partialUpdate(true);
-  // Run initial data update
-  runDataUpdate();
-  lastUpdateTime = millis();
+
+  // Initial updates
+  updateGraphData();
+  updateDashboardData();
+
+  lastGraphUpdateTime = millis();
+  lastDashboardUpdateTime = millis();
 }
+
+// Modified loop function
 void loop() {
-  // Check if it's time for an update
   unsigned long currentTime = millis();
-  // Handle millis() overflow (every ~50 days)
-  if (currentTime < lastUpdateTime) {
-    lastUpdateTime = 0;
+
+  // Handle millis() overflow
+  if (currentTime < lastGraphUpdateTime) {
+    lastGraphUpdateTime = 0;
   }
-  if ((currentTime - lastUpdateTime) >= UPDATE_INTERVAL) {
-    lastUpdateTime = currentTime;
-    runDataUpdate();
+  if (currentTime < lastDashboardUpdateTime) {
+    lastDashboardUpdateTime = 0;
   }
+
+  // Check if it's time for a graph update
+  if ((currentTime - lastGraphUpdateTime) >= GRAPH_UPDATE_INTERVAL) {
+    lastGraphUpdateTime = currentTime;
+    updateGraphData();
+  }
+
+  // Check if it's time for a dashboard update
+  if ((currentTime - lastDashboardUpdateTime) >= DASHBOARD_UPDATE_INTERVAL) {
+    lastDashboardUpdateTime = currentTime;
+    updateDashboardData();
+  }
+
   // Small delay to prevent watchdog issues
-  delay(1000);
+  delay(100);
 }
+
