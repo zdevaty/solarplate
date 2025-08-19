@@ -616,7 +616,7 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   if (gridPower > 10) {
     drawOrthogonalConnection(
       gridBoxX + boxWidth, gridCenterY,  // Start at right center of grid box
-      systemBoxX, systemCenterY,         // End at left center of system box
+      systemBoxX-30, systemBoxY,         // End at left center of system box
       0                                  // Arrow direction: right
     );
   }
@@ -624,8 +624,8 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   // 2. System to Grid connection (if exporting)
   if (gridPower < -10) {
     drawOrthogonalConnection(
-      systemBoxX, systemCenterY,         // Start at left center of system box
       gridBoxX + boxWidth, gridCenterY,  // End at right center of grid box
+      systemBoxX-30, systemBoxY,         // Start at left center of system box
       2                                  // Arrow direction: left
     );
   }
@@ -633,8 +633,8 @@ void drawDashboard(float gridPower, float acLoads, float batteryPower, float pvP
   // 3. PV to System connection (always when PV is producing)
   if (pvPower > 10) {
     drawOrthogonalConnection(
-      pvTopX, pvTopY,                         // Start at top center of PV box
-      systemCenterX, systemBoxY + boxHeight,  // End at bottom center of system box
+      pvBoxX, pvCenterY,                         // Start at top center of PV box
+      systemCenterX+30, systemBoxY + boxHeight,  // End at bottom center of system box
       2                                     // Arrow direction: left
     );
   }
